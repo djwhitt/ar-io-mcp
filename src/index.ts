@@ -157,6 +157,69 @@ server.tool("get-gateway-info", {}, async () => {
   }
 });
 
+// Tool: Execute GraphQL query
+server.tool(
+  "execute-graphql",
+  {
+    query: z.string().min(1, "GraphQL query is required"),
+    variables: z.record(z.any()).optional(),
+    operationName: z.string().optional(),
+  },
+  async ({
+    query,
+    variables,
+    operationName,
+  }: {
+    query: string;
+    variables?: Record<string, any>;
+    operationName?: string;
+  }) => {
+    try {
+      const response = await fetch(`${gatewayUrl}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query,
+          variables,
+          operationName,
+        }),
+      });
+
+      if (!response.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error executing GraphQL query: ${response.status} ${response.statusText}`,
+            },
+          ],
+        };
+      }
+
+      const result = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Resource: Transaction data resource
 server.resource(
   "transaction",
@@ -270,6 +333,92 @@ process.on("SIGTERM", () => {
   console.error("Process terminated by SIGTERM");
   process.exit(0);
 });
+
+// Resource: GraphQL resource
+server.resource(
+  "graphql",
+  new ResourceTemplate("graphql://{query}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const query = variables.query as string;
+      
+      if (!query) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing GraphQL query",
+            },
+          ],
+        };
+      }
+
+      // Extract any variables and operationName from the URI search params
+      const searchParams = new URLSearchParams(uri.search);
+      const variablesParam = searchParams.get("variables");
+      const operationName = searchParams.get("operationName") || undefined;
+      
+      // Parse variables if they exist
+      let parsedVariables: Record<string, any> | undefined;
+      if (variablesParam) {
+        try {
+          parsedVariables = JSON.parse(variablesParam);
+        } catch (err) {
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                text: "Error: Invalid JSON in variables parameter",
+              },
+            ],
+          };
+        }
+      }
+      
+      const response = await fetch(`${gatewayUrl}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query,
+          variables: parsedVariables,
+          operationName,
+        }),
+      });
+
+      if (!response.ok) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: `Error executing GraphQL query: ${response.status} ${response.statusText}`,
+            },
+          ],
+        };
+      }
+
+      const result = await response.json();
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
 
 // Connect the server to the transport
 server.connect(transport).catch((error: unknown) => {
