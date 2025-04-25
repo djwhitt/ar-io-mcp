@@ -83,12 +83,27 @@ server.tool(
         };
       }
 
-      const data = await response.text();
+      // Check content type to handle data appropriately
+      const contentType = response.headers.get("Content-Type") || "";
+      let data;
+      
+      if (contentType.includes("text/") || 
+          contentType.includes("application/json") || 
+          contentType.includes("application/xml") ||
+          contentType.includes("application/javascript")) {
+        // Handle text-based content types
+        data = await response.text();
+      } else {
+        // Handle binary content types with base64 encoding
+        const buffer = await response.arrayBuffer();
+        data = `[Binary data encoded as base64]: ${Buffer.from(buffer).toString('base64')}`;
+      }
+      
       return {
         content: [
           {
             type: "text",
-            text: `Transaction data (${contentLength} bytes): ${data}`,
+            text: `Transaction data (${contentLength} bytes, ${contentType}): ${data}`,
           },
         ],
       };
@@ -205,12 +220,27 @@ server.resource(
         };
       }
 
-      const data = await response.text();
+      // Check content type to handle data appropriately
+      const contentType = response.headers.get("Content-Type") || "";
+      let data;
+      
+      if (contentType.includes("text/") || 
+          contentType.includes("application/json") || 
+          contentType.includes("application/xml") ||
+          contentType.includes("application/javascript")) {
+        // Handle text-based content types
+        data = await response.text();
+      } else {
+        // Handle binary content types with base64 encoding
+        const buffer = await response.arrayBuffer();
+        data = `[Binary data encoded as base64]: ${Buffer.from(buffer).toString('base64')}`;
+      }
+      
       return {
         contents: [
           {
             uri: uri.href,
-            text: `Transaction data (${contentLength} bytes): ${data}`,
+            text: `Transaction data (${contentLength} bytes, ${contentType}): ${data}`,
           },
         ],
       };
