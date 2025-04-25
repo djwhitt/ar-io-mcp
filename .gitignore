@@ -9,6 +9,7 @@ yarn-error.log*
 node_modules/
 coverage/
 .nyc_output/
+dist/
 
 # Environment
 .env
