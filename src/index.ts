@@ -3,6 +3,8 @@
  * Provides access to AR.IO Gateway functionality for raw transaction data and gateway info
  */
 
+import { AOProcess, ARIO } from "@ar.io/sdk";
+import { connect } from '@permaweb/aoconnect';
 import {
   McpServer,
   ResourceTemplate,
@@ -320,6 +322,62 @@ server.resource(
   }
 );
 
+// Tool: List all AR.IO gateways
+server.tool(
+  "list-gateways",
+  {
+    network: z.enum(["mainnet", "testnet"]).optional(),
+    limit: z.number().positive().optional(),
+  },
+  async ({
+    network = "mainnet",
+    limit,
+  }: {
+    network?: "mainnet" | "testnet";
+    limit?: number;
+  }) => {
+    try {
+      // Initialize AR.IO SDK with specified network
+      const ario = network === "mainnet" 
+        ? ARIO.init({
+          process: new AOProcess({
+            processId: 'qNvAoz0TgcH7DMg8BCVn8jF32QH5L6T29VjHxhHqqGE',
+            ao: connect({
+              CU_URL: 'https://cu.ardrive.net'
+            }),
+          }),
+        }) 
+        : ARIO.testnet();
+      
+      // Get gateways with pagination
+      const gatewaysResult = await ario.getGateways({
+        limit: limit || 100 // Use specified limit or default to 100
+      });
+      
+      // Extract the items array
+      const gateways = gatewaysResult.items;
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(gateways, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Start receiving messages on stdin and sending messages on stdout
 const transport = new StdioServerTransport();
 
@@ -404,6 +462,65 @@ server.resource(
           {
             uri: uri.href,
             text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: Gateway list resource
+server.resource(
+  "gateways",
+  new ResourceTemplate("gateways://{network}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const network = (variables.network as string) || "mainnet";
+      
+      if (!["mainnet", "testnet"].includes(network)) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Invalid network. Must be one of: mainnet, testnet",
+            },
+          ],
+        };
+      }
+      
+      // Initialize AR.IO SDK with specified network
+      const ario = network === "mainnet" 
+        ? ARIO.mainnet() 
+        : ARIO.testnet();
+      
+      // Extract limit from search params if it exists
+      const searchParams = new URLSearchParams(uri.search);
+      const limitParam = searchParams.get("limit");
+      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+      
+      // Get gateways with pagination
+      const validLimit = (limit && !isNaN(limit) && limit > 0) ? limit : 100;
+      const gatewaysResult = await ario.getGateways({
+        limit: validLimit
+      });
+      
+      // Extract the items array
+      const gateways = gatewaysResult.items;
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(gateways, null, 2),
           },
         ],
       };
