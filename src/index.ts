@@ -122,7 +122,7 @@ server.tool(
   }
 );
 
-// Tool: Get gateway info
+// Tool: Get default gateway info
 server.tool("get-gateway-info", {}, async () => {
   try {
     const response = await fetch(`${gatewayUrl}/ar-io/info`);
@@ -158,6 +158,56 @@ server.tool("get-gateway-info", {}, async () => {
     };
   }
 });
+
+// Tool: Get gateway info by hostname
+server.tool(
+  "get-gateway-info-by-hostname",
+  {
+    hostname: z.string().min(1, "Hostname is required"),
+  },
+  async ({ hostname }: { hostname: string }) => {
+    try {
+      // Clean the hostname (remove protocol if present)
+      const cleanHostname = hostname.replace(/^https?:\/\//, "");
+      
+      // Construct the gateway info URL
+      const gatewayInfoUrl = `https://${cleanHostname}/ar-io/info`;
+      
+      // Fetch info directly from the gateway
+      const response = await fetch(gatewayInfoUrl);
+
+      if (!response.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error fetching gateway info from ${cleanHostname}: ${response.status} ${response.statusText}`,
+            },
+          ],
+        };
+      }
+
+      const info = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(info, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
 
 // Tool: Execute GraphQL query
 server.tool(
@@ -521,6 +571,67 @@ server.resource(
           {
             uri: uri.href,
             text: JSON.stringify(gateways, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: Specific gateway info resource
+server.resource(
+  "gateway",
+  new ResourceTemplate("gateway://{hostname}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const hostname = variables.hostname as string;
+      
+      if (!hostname) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing hostname",
+            },
+          ],
+        };
+      }
+      
+      // Clean the hostname (remove protocol if present)
+      const cleanHostname = hostname.replace(/^https?:\/\//, "");
+      
+      // Construct the gateway info URL
+      const gatewayInfoUrl = `https://${cleanHostname}/ar-io/info`;
+      
+      // Fetch info directly from the gateway
+      const response = await fetch(gatewayInfoUrl);
+
+      if (!response.ok) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: `Error fetching gateway info from ${cleanHostname}: ${response.status} ${response.statusText}`,
+            },
+          ],
+        };
+      }
+
+      const info = await response.json();
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(info, null, 2),
           },
         ],
       };

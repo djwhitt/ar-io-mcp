@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server for interacting with AR.IO gateways.
 ## Features
 
 - Fetch raw transaction data with range requests
-- Get gateway information
+- Get gateway information (for default or any specific gateway by hostname)
 - List all AR.IO gateways across networks (mainnet, testnet)
 - Execute GraphQL queries
 - Uses STDIO transport for integration with MCP-compatible LLMs
@@ -52,11 +52,13 @@ The server provides the following resources and tools:
 - `transaction://{txId}` - Retrieve transaction data by transaction ID
 - `graphql://{query}` - Execute a GraphQL query
 - `gateways://{network}` - List all gateways for a specific network (mainnet, testnet)
+- `gateway://{hostname}` - Get information about a specific gateway by hostname
 
 ### Tools
 
 - `fetch-raw-transaction` - Fetch transaction data by transaction ID
 - `get-gateway-info` - Get information about the configured gateway
+- `get-gateway-info-by-hostname` - Get information about a specific gateway by hostname
 - `execute-graphql` - Execute a GraphQL query
 - `list-gateways` - List all AR.IO gateways for a specified network
 
