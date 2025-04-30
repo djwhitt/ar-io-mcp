@@ -389,14 +389,7 @@ server.tool(
     try {
       // Initialize AR.IO SDK with specified network
       const ario = network === "mainnet" 
-        ? ARIO.init({
-          process: new AOProcess({
-            processId: 'qNvAoz0TgcH7DMg8BCVn8jF32QH5L6T29VjHxhHqqGE',
-            ao: connect({
-              CU_URL: 'https://cu.ardrive.net'
-            }),
-          }),
-        }) 
+        ? ARIO.mainnet()
         : ARIO.testnet();
       
       // Get gateways with pagination
