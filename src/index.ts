@@ -10,8 +10,10 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as duckdbAsync from "duckdb-async";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import path from "path";
 import { z } from "zod";
 
 // Define template variables interface
@@ -24,6 +26,22 @@ dotenv.config();
 
 // Get AR.IO Gateway URL from environment variable
 const gatewayUrl: string = process.env.AR_IO_GATEWAY_URL || "https://ardrive.net";
+
+// Configure DuckDB
+const duckdbConfig = {
+  path: ':memory:', // In-memory database
+  parquetDirectory: process.env.PARQUET_DIRECTORY || path.join(process.cwd(), '/data/parquet/tags'),
+};
+
+// Custom JSON serializer that handles BigInt values by converting them to strings
+function safeStringify(obj: any, indent: number = 2): string {
+  return JSON.stringify(obj, (_, value) => {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    return value;
+  }, indent);
+}
 
 // Create the MCP server
 const server = new McpServer({
@@ -487,6 +505,29 @@ process.on("SIGTERM", () => {
   console.error("Process terminated by SIGTERM");
   process.exit(0);
 });
+
+// Helper function to initialize DuckDB and run a query
+async function runDuckDBQuery(query: string): Promise<any[]> {
+  try {
+    // Create database connection
+    const db = await duckdbAsync.Database.create(duckdbConfig.path);
+
+    // Prepare the database
+    const conn = await db.connect();
+    
+    // Execute the query
+    const result = await conn.all(query);
+    
+    // Close the connection
+    await conn.close();
+    await db.close();
+    
+    return result;
+  } catch (error) {
+    console.error("DuckDB query error:", error);
+    throw error;
+  }
+}
 
 // Resource: GraphQL resource
 server.resource(
@@ -1149,6 +1190,202 @@ server.resource(
           {
             uri: uri.href,
             text: JSON.stringify(latestVersion, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Query Parquet files using DuckDB
+server.tool(
+  "query-parquet",
+  {
+    query: z.string().min(1, "SQL query is required"),
+    limit: z.number().positive().optional(),
+  },
+  async ({ query, limit = 100 }: { query: string; limit?: number }) => {
+    try {
+      // Create a database connection
+      const db = await duckdbAsync.Database.create(duckdbConfig.path);
+      
+      // Connect to the database
+      const conn = await db.connect();
+      
+      // Register the Parquet files directory
+      await conn.exec(`
+        CREATE VIEW IF NOT EXISTS tags AS 
+        SELECT * FROM read_parquet('${duckdbConfig.parquetDirectory}/*.parquet');
+      `);
+      
+      // Add a LIMIT clause if not already present in the query
+      let queryWithLimit = query.trim();
+      if (!queryWithLimit.toLowerCase().includes("limit ")) {
+        queryWithLimit += ` LIMIT ${limit}`;
+      }
+      
+      // Execute the query
+      const result = await conn.all(queryWithLimit);
+      
+      // Close the connection
+      await conn.close();
+      await db.close();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: safeStringify({
+              result,
+              rowCount: result.length,
+              query: queryWithLimit,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error executing Parquet query: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get Parquet schema information
+server.tool(
+  "get-parquet-schema",
+  {},
+  async () => {
+    try {
+      // Create a database connection
+      const db = await duckdbAsync.Database.create(duckdbConfig.path);
+      
+      // Connect to the database
+      const conn = await db.connect();
+      
+      // Register the Parquet files directory and get schema
+      await conn.exec(`
+        CREATE VIEW IF NOT EXISTS tags AS 
+        SELECT * FROM read_parquet('${duckdbConfig.parquetDirectory}/*.parquet');
+      `);
+      
+      // Get schema information
+      const schema = await conn.all(`
+        DESCRIBE tags;
+      `);
+      
+      // Get sample data
+      const sample = await conn.all(`
+        SELECT * FROM tags LIMIT 5;
+      `);
+      
+      // Get count
+      const countResult = await conn.all(`
+        SELECT COUNT(*) as total FROM tags;
+      `);
+      
+      // Close the connection
+      await conn.close();
+      await db.close();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: safeStringify({
+              schema,
+              sampleData: sample,
+              totalRows: countResult[0]?.total || 0,
+              parquetDirectory: duckdbConfig.parquetDirectory,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting Parquet schema: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: Parquet data access
+server.resource(
+  "parquet",
+  new ResourceTemplate("parquet://{query}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const query = variables.query as string;
+      
+      if (!query) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing SQL query",
+            },
+          ],
+        };
+      }
+      
+      // Extract limit from search params if it exists
+      const searchParams = new URLSearchParams(uri.search);
+      const limitParam = searchParams.get("limit");
+      const limit = limitParam ? parseInt(limitParam, 10) : 100;
+      
+      // Create a database connection
+      const db = await duckdbAsync.Database.create(duckdbConfig.path);
+      
+      // Connect to the database
+      const conn = await db.connect();
+      
+      // Register the Parquet files directory
+      await conn.exec(`
+        CREATE VIEW IF NOT EXISTS tags AS 
+        SELECT * FROM read_parquet('${duckdbConfig.parquetDirectory}/*.parquet');
+      `);
+      
+      // Add a LIMIT clause if not already present in the query
+      let queryWithLimit = query.trim();
+      if (!queryWithLimit.toLowerCase().includes("limit ")) {
+        queryWithLimit += ` LIMIT ${limit}`;
+      }
+      
+      // Execute the query
+      const result = await conn.all(queryWithLimit);
+      
+      // Close the connection
+      await conn.close();
+      await db.close();
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: safeStringify({
+              result,
+              rowCount: result.length,
+              query: queryWithLimit,
+            }),
           },
         ],
       };
