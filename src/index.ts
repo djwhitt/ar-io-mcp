@@ -3,7 +3,7 @@
  * Provides access to AR.IO Gateway functionality for raw transaction data and gateway info
  */
 
-import { AOProcess, ARIO } from "@ar.io/sdk";
+import { ANT, AOProcess, ARIO } from "@ar.io/sdk";
 import { connect } from '@permaweb/aoconnect';
 import {
   McpServer,
@@ -421,6 +421,59 @@ server.tool(
   }
 );
 
+// Tool: Retrieve ArNS records
+server.tool(
+  "get-arns-records",
+  {
+    cursor: z.string().optional(),
+    limit: z.number().positive().optional(),
+    sortBy: z.enum(["name", "type", "processId", "startTimestamp", "undernameLimit", "purchasePrice", "endTimestamp"]).optional(),
+    sortOrder: z.enum(["asc", "desc"]).optional(),
+  },
+  async ({
+    cursor,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    cursor?: string;
+    limit?: number;
+    sortBy?: "name" | "type" | "processId" | "startTimestamp" | "undernameLimit" | "purchasePrice" | "endTimestamp";
+    sortOrder?: "asc" | "desc";
+  }) => {
+    try {
+      // Initialize AR.IO SDK with mainnet (assuming ArNS is primarily on mainnet)
+      const ario = ARIO.mainnet();
+      
+      // Get ArNS records with provided parameters
+      const arnsRecordsResult = await ario.getArNSRecords({
+        cursor,
+        limit: limit || 100, // Use specified limit or default to 100
+        sortBy,
+        sortOrder,
+      });
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(arnsRecordsResult, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error retrieving ArNS records: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Start receiving messages on stdin and sending messages on stdout
 const transport = new StdioServerTransport();
 
@@ -625,6 +678,477 @@ server.resource(
           {
             uri: uri.href,
             text: JSON.stringify(info, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: ArNS records resource
+server.resource(
+  "arns",
+  new ResourceTemplate("arns://{network}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const network = (variables.network as string) || "mainnet";
+      
+      if (!["mainnet", "testnet"].includes(network)) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Invalid network. Must be one of: mainnet, testnet",
+            },
+          ],
+        };
+      }
+      
+      // Initialize AR.IO SDK with specified network
+      const ario = network === "mainnet" 
+        ? ARIO.mainnet() 
+        : ARIO.testnet();
+      
+      // Extract parameters from search params
+      const searchParams = new URLSearchParams(uri.search);
+      const cursor = searchParams.get("cursor") || undefined;
+      const limitParam = searchParams.get("limit");
+      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+      const sortBy = searchParams.get("sortBy") as "name" | "type" | "processId" | "startTimestamp" | "undernameLimit" | "purchasePrice" | "endTimestamp" | undefined;
+      const sortOrder = searchParams.get("sortOrder") as "asc" | "desc" | undefined;
+      
+      // Validate parameters
+      const validLimit = (limit && !isNaN(limit) && limit > 0) ? limit : 100;
+      
+      if (sortBy && !["height", "nameHeight", "lastUpdateHeight"].includes(sortBy)) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Invalid sortBy parameter. Must be one of: height, nameHeight, lastUpdateHeight",
+            },
+          ],
+        };
+      }
+      
+      if (sortOrder && !["asc", "desc"].includes(sortOrder)) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Invalid sortOrder parameter. Must be one of: asc, desc",
+            },
+          ],
+        };
+      }
+      
+      // Get ArNS records with pagination and sorting
+      const arnsRecordsResult = await ario.getArNSRecords({
+        cursor,
+        limit: validLimit,
+        sortBy,
+        sortOrder,
+      });
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(arnsRecordsResult, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get ANT information
+server.tool(
+  "get-ant-info",
+  {
+    processId: z.string().min(43, "Process ID must be an Arweave transaction ID"),
+  },
+  async ({ processId }: { processId: string }) => {
+    try {
+      // Initialize ANT client with the provided process ID
+      const ant = ANT.init({ processId });
+      
+      // Fetch ANT info
+      const info = await ant.getInfo();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(info, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching ANT info: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get ANT state (full state including records)
+server.tool(
+  "get-ant-state",
+  {
+    processId: z.string().min(43, "Process ID must be an Arweave transaction ID"),
+  },
+  async ({ processId }: { processId: string }) => {
+    try {
+      // Initialize ANT client with the provided process ID
+      const ant = ANT.init({ processId });
+      
+      // Fetch ANT state
+      const state = await ant.getState();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(state, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching ANT state: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get ANT records
+server.tool(
+  "get-ant-records",
+  {
+    processId: z.string().min(43, "Process ID must be an Arweave transaction ID"),
+  },
+  async ({ processId }: { processId: string }) => {
+    try {
+      // Initialize ANT client with the provided process ID
+      const ant = ANT.init({ processId });
+      
+      // Fetch ANT records
+      const records = await ant.getRecords();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(records, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching ANT records: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get specific ANT record
+server.tool(
+  "get-ant-record",
+  {
+    processId: z.string().min(43, "Process ID must be an Arweave transaction ID"),
+    undername: z.string().min(1, "Undername is required"),
+  },
+  async ({ processId, undername }: { processId: string; undername: string }) => {
+    try {
+      // Initialize ANT client with the provided process ID
+      const ant = ANT.init({ processId });
+      
+      // Fetch ANT record for the specified undername
+      const record = await ant.getRecord({ undername });
+      
+      if (!record) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No record found for undername "${undername}"`,
+            },
+          ],
+        };
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(record, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching ANT record: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get ANT versions
+server.tool(
+  "get-ant-versions",
+  {},
+  async () => {
+    try {
+      // Use the static ANT.versions to get all available ANT versions
+      const versions = await ANT.versions.getANTVersions();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(versions, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching ANT versions: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Tool: Get latest ANT version
+server.tool(
+  "get-latest-ant-version",
+  {},
+  async () => {
+    try {
+      // Use the static ANT.versions to get the latest ANT version
+      const latestVersion = await ANT.versions.getLatestANTVersion();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(latestVersion, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching latest ANT version: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: ANT resource
+server.resource(
+  "ant",
+  new ResourceTemplate("ant://{processId}/{action}", { list: undefined }),
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    try {
+      const processId = variables.processId as string;
+      const action = variables.action as string || "info";
+      
+      if (!processId) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing ANT process ID",
+            },
+          ],
+        };
+      }
+      
+      // Initialize ANT client with the provided process ID
+      const ant = ANT.init({ processId });
+      
+      // Extract any additional parameters from the URI search params
+      const searchParams = new URLSearchParams(uri.search);
+      const undername = searchParams.get("undername") || undefined;
+      
+      let result;
+      
+      // Handle different actions
+      switch (action) {
+        case "info":
+          result = await ant.getInfo();
+          break;
+        case "state":
+          result = await ant.getState();
+          break;
+        case "records":
+          result = await ant.getRecords();
+          break;
+        case "record":
+          if (!undername) {
+            return {
+              contents: [
+                {
+                  uri: uri.href,
+                  text: "Error: Missing undername parameter for record action",
+                },
+              ],
+            };
+          }
+          result = await ant.getRecord({ undername });
+          if (!result) {
+            return {
+              contents: [
+                {
+                  uri: uri.href,
+                  text: `No record found for undername "${undername}"`,
+                },
+              ],
+            };
+          }
+          break;
+        case "owner":
+          result = await ant.getOwner();
+          break;
+        case "controllers":
+          result = await ant.getControllers();
+          break;
+        case "name":
+          result = await ant.getName();
+          break;
+        case "ticker":
+          result = await ant.getTicker();
+          break;
+        case "balances":
+          result = await ant.getBalances();
+          break;
+        case "logo":
+          result = await ant.getLogo();
+          break;
+        default:
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                text: `Error: Invalid action "${action}". Valid actions are: info, state, records, record, owner, controllers, name, ticker, balances, logo`,
+              },
+            ],
+          };
+      }
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: ANT versions resource
+server.resource(
+  "ant-versions",
+  new ResourceTemplate("ant://versions", { list: undefined }),
+  async (uri: URL) => {
+    try {
+      // Handle GET requests for ANT versions
+      const versions = await ANT.versions.getANTVersions();
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(versions, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Resource: ANT latest version resource
+server.resource(
+  "ant-latest-version",
+  new ResourceTemplate("ant://latest-version", { list: undefined }),
+  async (uri: URL) => {
+    try {
+      // Handle GET requests for latest ANT version
+      const latestVersion = await ANT.versions.getLatestANTVersion();
+      
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(latestVersion, null, 2),
           },
         ],
       };
